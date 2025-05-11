@@ -268,14 +268,17 @@ impl AES128 {
 
     fn encrypt_block(&self, block: Block, key: &Key) -> Block {
         let mut block = block;
-        self.add_round_key(&mut block, key);
         let round_keys = key.rounds_keys(&AES_SBOX);
+        // 1st round
+        self.add_round_key(&mut block, key);
+        // 2nd to n-1th rounds
         for round_key in round_keys.iter().take(AES_ROUNDS).skip(1) {
             self.sub_bytes(&mut block, &AES_SBOX);
             AES128::shift_rows(&mut block);
             AES128::mix_columns(&mut block, &AES_MIX_COLUMNS_MATRIX);
             self.add_round_key(&mut block, round_key);
         }
+        // Last round
         self.sub_bytes(&mut block, &AES_SBOX);
         AES128::shift_rows(&mut block);
         self.add_round_key(&mut block, &round_keys[AES_ROUNDS]);
@@ -295,18 +298,20 @@ impl AES128 {
 
     fn decrypt_block(&self, block: Block, key: &Key) -> Block {
         let mut block = block;
-        let mut key = key;
-        self.add_round_key(&mut block, key);
-        let round_keys = key.rounds_keys(&AES_INV_SBOX);
-        for i in 1..AES_ROUNDS {
-            self.sub_bytes(&mut block, &AES_INV_SBOX);
-            AES128::shift_rows(&mut block);
-            AES128::mix_columns(&mut block, &AES_INV_MIX_COLUMNS_MATRIX);
-            self.add_round_key(&mut block, &round_keys[AES_ROUNDS - i]);
-        }
+        let round_keys = key.rounds_keys(&AES_SBOX);
+        // 1st round
+        self.add_round_key(&mut block, round_keys.last().unwrap());
+        AES128::inv_shift_rows(&mut block);
         self.sub_bytes(&mut block, &AES_INV_SBOX);
-        AES128::shift_rows(&mut block);
-        self.add_round_key(&mut block, &round_keys[0]);
+        // 2nd to n-1th rounds
+        for round_key in round_keys.iter().skip(1).rev().skip(1) {
+            self.add_round_key(&mut block, round_key);
+            AES128::mix_columns(&mut block, &AES_INV_MIX_COLUMNS_MATRIX);
+            AES128::inv_shift_rows(&mut block);
+            self.sub_bytes(&mut block, &AES_INV_SBOX);
+        }
+        // Last round
+        self.add_round_key(&mut block, round_keys.first().unwrap());
         block
     }
 
@@ -346,6 +351,15 @@ impl AES128 {
             let temp = state[i];
             for j in 0..4 {
                 state[i][j] = temp[(j + i) % 4];
+            }
+        }
+    }
+
+    fn inv_shift_rows(state: &mut Block) {
+        for i in 1..4 {
+            let temp = state[i];
+            for j in 0..4 {
+                state[i][j] = temp[(j + 4 - i) % 4];
             }
         }
     }
@@ -412,10 +426,10 @@ const AES_MIX_COLUMNS_MATRIX: [[u8; 4]; 4] = [
 
 #[rustfmt::skip]
 const AES_INV_MIX_COLUMNS_MATRIX: [[u8; 4]; 4] = [
-    [0x14, 0x11, 0x13, 0x09],
-    [0x09, 0x14, 0x11, 0x13],
-    [0x13, 0x09, 0x14, 0x11],
-    [0x11, 0x13, 0x09, 0x14],
+    [0xe, 0xb, 0xd, 0x9],
+    [0x9, 0xe, 0xb, 0xd],
+    [0xd, 0x9, 0xe, 0xb],
+    [0xb, 0xd, 0x9, 0xe],
 ];
 
 #[rustfmt::skip]
@@ -435,9 +449,6 @@ mod tests {
         let block = Block::from_hex_string("3243f6a8885a308d313198a2e0370734");
         let key = Key::from_hex_string("2b7e151628aed2a6abf7158809cf4f3c");
 
-        dbg!(&block);
-        dbg!(&key);
-
         let expected_encrypted = Block::from_hex_string("3925841d02dc09fbdc118597196a0b32");
 
         let mut aes = AES128::new();
@@ -447,7 +458,7 @@ mod tests {
 
         let decrypted = aes.decrypt_block(encrypted, &key);
 
-        //assert_eq!(block, decrypted); /TODO
+        assert_eq!(block, decrypted);
     }
 
     #[test]
