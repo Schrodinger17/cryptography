@@ -1,25 +1,19 @@
 #![allow(unused)]
 mod aes;
 mod math;
-use aes::AES128;
+
 use aes::Key;
 
 fn main() {
-    let message = b"Hello, AES!".to_vec();
+    let message = "Hello, AES!".to_string();
 
-    println!("Message: {:?}", String::from_utf8_lossy(&message));
+    println!("Message: {:?}", &message);
 
     let key = Key::from("key");
-    let mut aes = AES128::new();
-    let encrypted = aes.encrypt(&message, &key);
+    let encrypted = aes::encrypt(&message, &key);
     println!("Encrypted: {:?}", encrypted);
-    println!("Encrypted (hex): {:?}", String::from_utf8_lossy(&encrypted));
-    let decrypted = aes.decrypt(&encrypted, &key);
+    println!("Encrypted (hex): {:?}", &encrypted);
+    let decrypted = aes::decrypt(&encrypted, &key);
     println!("Decrypted: {:?}", decrypted);
-    println!(
-        "Decrypted (utf8): {:?}",
-        String::from_utf8_lossy(&decrypted)
-    );
-
-    //aes::main();
+    println!("Decrypted (utf8): {:?}", &decrypted);
 }
