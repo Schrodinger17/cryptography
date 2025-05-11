@@ -371,7 +371,15 @@ pub fn decrypt<const NK: usize, const NR: usize>(data: &[u8], key: &Key<NK>) -> 
         .map(|block: Block| block.decrypt::<NK, NR>(key))
         .collect::<Vec<_>>();
 
-    String::from_utf8_lossy(&blocks_to_bytes(empcripted_blocks)).to_string()
+    String::from_utf8_lossy(
+        &blocks_to_bytes(empcripted_blocks)
+            .iter()
+            .filter(|c| **c != 0u8)
+            .cloned()
+            .collect::<Vec<u8>>(),
+    )
+    .trim_end()
+    .to_string()
 }
 
 fn blocks(data: &[u8]) -> Vec<Block> {
@@ -475,6 +483,16 @@ mod tests {
         let decrypted = encrypted.decrypt::<4, 10>(&key);
 
         assert_eq!(block, decrypted);
+    }
+
+    #[test]
+    fn aes_test_long_message() {
+        let message = "Demain, dès l'aube à l'heure ou blanchit la campagne.".to_string();
+        let key = Key128::from("key");
+        let encrypted = encrypt::<4, 10>(&message, &key);
+        assert_ne!(message, String::from_utf8_lossy(&encrypted));
+        let decrypted = decrypt::<4, 10>(&encrypted, &key);
+        assert_eq!(message, decrypted);
     }
 
     #[test]
