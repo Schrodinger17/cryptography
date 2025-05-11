@@ -1,5 +1,6 @@
 use crate::math::*;
 use std::{
+    default,
     fmt::Debug,
     ops::{BitXor, BitXorAssign, Index, IndexMut},
 };
@@ -62,8 +63,8 @@ impl IndexMut<usize> for Block {
     }
 }
 
-impl BitXorAssign<&Key> for Block {
-    fn bitxor_assign(&mut self, rhs: &Key) {
+impl<const NK: usize> BitXorAssign<&Key<NK>> for Block {
+    fn bitxor_assign(&mut self, rhs: &Key<NK>) {
         for i in 0..4 {
             for j in 0..4 {
                 self.data[i][j] ^= rhs.subkeys[i][j];
@@ -74,19 +75,23 @@ impl BitXorAssign<&Key> for Block {
 
 type SubKey = [u8; 4];
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Key {
-    subkeys: [SubKey; 4],
+pub(crate) type Key128 = Key<4>;
+pub(crate) type Key192 = Key<6>;
+pub(crate) type Key256 = Key<8>;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Key<const NK: usize> {
+    subkeys: [SubKey; NK],
 }
 
-impl Key {
+impl<const NK: usize> Key<NK> {
     fn new() -> Self {
         Key {
-            subkeys: [[0; 4]; 4],
+            subkeys: [[0; 4]; NK],
         }
     }
 
-    fn from_subkeys(subkeys: [SubKey; 4]) -> Self {
+    fn from_subkeys(subkeys: [SubKey; NK]) -> Self {
         Key { subkeys }
     }
 
@@ -100,16 +105,16 @@ impl Key {
             })
             .collect::<Vec<_>>();
 
-        let mut subkeys = [[0; 4]; 4];
+        let mut subkeys = [[0; 4]; NK];
         for i in 0..4 {
-            for j in 0..4 {
+            for j in 0..NK {
                 subkeys[j][i] = bytes[i * 4 + j];
             }
         }
         Key { subkeys }
     }
 
-    fn subkeys(&self) -> [SubKey; 4] {
+    fn subkeys(&self) -> [SubKey; NK] {
         self.subkeys
     }
 
@@ -142,18 +147,19 @@ impl Key {
         key
     }
 
-    fn rounds_keys(&self, sbox: &Sbox) -> Vec<Key> {
+    fn rounds_keys(&self, sbox: &Sbox) -> Vec<Key<NK>> {
         let key = self.fliped();
         let mut keys = vec![key];
         for round in 1..=(AES_ROUNDS as u8) {
             let sub_keys = keys.last().unwrap().subkeys();
 
-            let mut next_sub_keys = [[0u8; 4]; 4];
+            let mut next_sub_keys = [[0u8; 4]; NK];
 
-            next_sub_keys[0] = Key::subkey_xor(sub_keys[0], Key::g(&sub_keys[3], round, sbox));
-            next_sub_keys[1] = Key::subkey_xor(sub_keys[1], next_sub_keys[0]);
-            next_sub_keys[2] = Key::subkey_xor(sub_keys[2], next_sub_keys[1]);
-            next_sub_keys[3] = Key::subkey_xor(sub_keys[3], next_sub_keys[2]);
+            next_sub_keys[0] =
+                Key::<NK>::subkey_xor(sub_keys[0], Key::<NK>::g(&sub_keys[3], round, sbox));
+            next_sub_keys[1] = Key::<NK>::subkey_xor(sub_keys[1], next_sub_keys[0]);
+            next_sub_keys[2] = Key::<NK>::subkey_xor(sub_keys[2], next_sub_keys[1]);
+            next_sub_keys[3] = Key::<NK>::subkey_xor(sub_keys[3], next_sub_keys[2]);
             let next_key = Key::from_subkeys(next_sub_keys);
             keys.push(next_key);
         }
@@ -167,7 +173,7 @@ impl Key {
 
     fn g(key: &SubKey, round: u8, sbox: &Sbox) -> SubKey {
         let mut new_key = [0; 4];
-        new_key[0] = gf_add(substitute(key[1], sbox), Key::r(round));
+        new_key[0] = gf_add(substitute(key[1], sbox), Key::<NK>::r(round));
         new_key[1] = substitute(key[2], sbox);
         new_key[2] = substitute(key[3], sbox);
         new_key[3] = substitute(key[0], sbox);
@@ -175,11 +181,10 @@ impl Key {
     }
 }
 
-impl Debug for Key {
+impl<const NK: usize> Debug for Key<NK> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f)?;
-        let len = self.subkeys.len();
-        for i in 0..len {
+        for i in 0..NK {
             for j in 0..4 {
                 write!(f, "{:02x} ", self.subkeys[i][j])?;
             }
@@ -189,10 +194,10 @@ impl Debug for Key {
     }
 }
 
-impl From<&str> for Key {
+impl<const NK: usize> From<&str> for Key<NK> {
     fn from(key: &str) -> Self {
         let bytes = key.as_bytes();
-        let mut subkeys = [[0; 4]; 4];
+        let mut subkeys = [[0; 4]; NK];
         for i in 0..4 {
             for j in 0..4 {
                 if i * 4 + j < bytes.len() {
@@ -206,13 +211,13 @@ impl From<&str> for Key {
     }
 }
 
-impl<T> From<&[T; 16]> for Key
+impl<const NK: usize, T> From<&[T; 16]> for Key<NK>
 where
     T: Copy + Into<u8>,
 {
     fn from(key: &[T; 16]) -> Self {
-        let mut subkeys = [[0; 4]; 4];
-        for i in 0..4 {
+        let mut subkeys = [[0; 4]; NK];
+        for i in 0..NK {
             for j in 0..4 {
                 subkeys[i][j] = key[i * 4 + j].into();
             }
@@ -221,8 +226,8 @@ where
     }
 }
 
-impl From<Key> for [u8; 16] {
-    fn from(key: Key) -> Self {
+impl<const NK: usize> From<Key<NK>> for [u8; 16] {
+    fn from(key: Key<NK>) -> Self {
         let mut bytes = [0; 16];
         for i in 0..4 {
             for j in 0..4 {
@@ -233,33 +238,33 @@ impl From<Key> for [u8; 16] {
     }
 }
 
-impl Index<usize> for Key {
+impl<const NK: usize> Index<usize> for Key<NK> {
     type Output = u8;
 
     fn index(&self, index: usize) -> &Self::Output {
-        &self.subkeys[index / 4][index % 4]
+        &self.subkeys[index / NK][index % 4]
     }
 }
 
-impl IndexMut<usize> for Key {
+impl<const NK: usize> IndexMut<usize> for Key<NK> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        &mut self.subkeys[index / 4][index % 4]
+        &mut self.subkeys[index / NK][index % 4]
     }
 }
 
-pub fn encrypt(data: &str, key: &Key) -> Vec<u8> {
+pub fn encrypt<const NK: usize, const NR: usize>(data: &str, key: &Key<NK>) -> Vec<u8> {
     let data = data.as_bytes();
     let blocks = blocks(data);
 
     let empcripted_blocks = blocks
         .into_iter()
-        .map(|block| encrypt_block(block, key))
+        .map(|block| encrypt_block::<NK, NR>(block, key))
         .collect::<Vec<_>>();
 
     blocks_to_bytes(empcripted_blocks)
 }
 
-fn encrypt_block(block: Block, key: &Key) -> Block {
+fn encrypt_block<const NK: usize, const NR: usize>(block: Block, key: &Key<NK>) -> Block {
     let mut block = block;
     let round_keys = key.rounds_keys(&AES_SBOX);
     // 1st round
@@ -278,18 +283,18 @@ fn encrypt_block(block: Block, key: &Key) -> Block {
     block
 }
 
-pub fn decrypt(data: &[u8], key: &Key) -> String {
+pub fn decrypt<const NK: usize, const NR: usize>(data: &[u8], key: &Key<NK>) -> String {
     let blocks = blocks(data);
 
     let empcripted_blocks = blocks
         .into_iter()
-        .map(|block: Block| decrypt_block(block, key))
+        .map(|block: Block| decrypt_block::<NK, NR>(block, key))
         .collect::<Vec<_>>();
 
     String::from_utf8_lossy(&blocks_to_bytes(empcripted_blocks)).to_string()
 }
 
-fn decrypt_block(block: Block, key: &Key) -> Block {
+fn decrypt_block<const NK: usize, const NR: usize>(block: Block, key: &Key<NK>) -> Block {
     let mut block = block;
     let round_keys = key.rounds_keys(&AES_SBOX);
     // 1st round
@@ -335,7 +340,7 @@ fn sub_bytes(state: &mut Block, sbox: &Sbox) {
     }
 }
 
-fn add_round_key(state: &mut Block, round_key: &Key) {
+fn add_round_key<const NK: usize>(state: &mut Block, round_key: &Key<NK>) {
     *state ^= round_key;
 }
 
@@ -433,38 +438,38 @@ mod tests {
     #[test]
     fn aes_test() {
         let block = Block::from_hex_string("3243f6a8885a308d313198a2e0370734");
-        let key = Key::from_hex_string("2b7e151628aed2a6abf7158809cf4f3c");
+        let key = Key128::from_hex_string("2b7e151628aed2a6abf7158809cf4f3c");
 
         let expected_encrypted = Block::from_hex_string("3925841d02dc09fbdc118597196a0b32");
 
-        let encrypted = encrypt_block(block.clone(), &key);
+        let encrypted = encrypt_block::<4, 10>(block.clone(), &key);
         assert_ne!(block, encrypted);
         assert_eq!(expected_encrypted, encrypted);
 
-        let decrypted = decrypt_block(encrypted, &key);
+        let decrypted = decrypt_block::<4, 10>(encrypted, &key);
 
         assert_eq!(block, decrypted);
     }
 
     #[test]
     fn r_test() {
-        assert_eq!(Key::r(1), 0x01);
-        assert_eq!(Key::r(2), 0x02);
-        assert_eq!(Key::r(3), 0x04);
-        assert_eq!(Key::r(4), 0x08);
-        assert_eq!(Key::r(5), 0x10);
-        assert_eq!(Key::r(6), 0x20);
-        assert_eq!(Key::r(7), 0x40);
-        assert_eq!(Key::r(8), 0x80);
-        assert_eq!(Key::r(9), 0x1b);
-        assert_eq!(Key::r(10), 0x36);
+        assert_eq!(Key128::r(1), 0x01);
+        assert_eq!(Key128::r(2), 0x02);
+        assert_eq!(Key128::r(3), 0x04);
+        assert_eq!(Key128::r(4), 0x08);
+        assert_eq!(Key128::r(5), 0x10);
+        assert_eq!(Key128::r(6), 0x20);
+        assert_eq!(Key128::r(7), 0x40);
+        assert_eq!(Key128::r(8), 0x80);
+        assert_eq!(Key128::r(9), 0x1b);
+        assert_eq!(Key128::r(10), 0x36);
     }
 
     #[test]
     fn round_key_test() {
-        let key0 = Key::from_hex_string("2b7e151628aed2a6abf7158809cf4f3c");
-        let key1 = Key::from_hex_string("a0fafe1788542cb123a339392a6c7605");
-        let key11 = Key::from_hex_string("d014f9a8c9ee2589e13f0cc8b6630ca6");
+        let key0 = Key128::from_hex_string("2b7e151628aed2a6abf7158809cf4f3c");
+        let key1 = Key128::from_hex_string("a0fafe1788542cb123a339392a6c7605");
+        let key11 = Key128::from_hex_string("d014f9a8c9ee2589e13f0cc8b6630ca6");
 
         let rounds_keys = key0.rounds_keys(&AES_SBOX);
 
