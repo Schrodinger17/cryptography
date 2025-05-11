@@ -36,13 +36,13 @@ impl Block {
 
 impl Debug for Block {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "")?;
+        writeln!(f)?;
         let len = self.data.len();
         for i in 0..len {
             for j in 0..4 {
                 write!(f, "{:02x} ", self.data[i][j])?;
             }
-            writeln!(f, "")?;
+            writeln!(f)?;
         }
         Ok(())
     }
@@ -129,15 +129,15 @@ impl Key {
 
     fn flip(&mut self) {
         let copy = self.subkeys;
-        for i in 0..4 {
-            for j in 0..4 {
-                self.subkeys[i][j] = copy[j][i];
+        for (i, row) in copy.iter().enumerate() {
+            for (j, v) in row.iter().enumerate() {
+                self.subkeys[j][i] = *v;
             }
         }
     }
 
     fn fliped(&self) -> Self {
-        let mut key = self.clone();
+        let mut key = *self;
         key.flip();
         key
     }
@@ -177,13 +177,13 @@ impl Key {
 
 impl Debug for Key {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "")?;
+        writeln!(f)?;
         let len = self.subkeys.len();
         for i in 0..len {
             for j in 0..4 {
                 write!(f, "{:02x} ", self.subkeys[i][j])?;
             }
-            writeln!(f, "")?;
+            writeln!(f)?;
         }
         Ok(())
     }
@@ -221,12 +221,12 @@ where
     }
 }
 
-impl Into<[u8; 16]> for Key {
-    fn into(self) -> [u8; 16] {
+impl From<Key> for [u8; 16] {
+    fn from(key: Key) -> Self {
         let mut bytes = [0; 16];
         for i in 0..4 {
             for j in 0..4 {
-                bytes[i * 4 + j] = self.subkeys[i][j];
+                bytes[i * 4 + j] = key.subkeys[i][j];
             }
         }
         bytes
@@ -256,25 +256,25 @@ impl AES128 {
     }
 
     pub fn encrypt(&self, data: &[u8], key: &Key) -> Vec<u8> {
-        let blocks = self.blocks(&data);
+        let blocks = self.blocks(data);
 
         let empcripted_blocks = blocks
             .into_iter()
-            .map(|block| self.encrypt_block(block, &key))
+            .map(|block| self.encrypt_block(block, key))
             .collect::<Vec<_>>();
 
         self.blocks_to_bytes(empcripted_blocks)
     }
 
     fn encrypt_block(&self, block: Block, key: &Key) -> Block {
-        let mut block = block.clone();
-        self.add_round_key(&mut block, &key);
+        let mut block = block;
+        self.add_round_key(&mut block, key);
         let round_keys = key.rounds_keys(&AES_SBOX);
-        for i in 1..AES_ROUNDS {
+        for round_key in round_keys.iter().take(AES_ROUNDS).skip(1) {
             self.sub_bytes(&mut block, &AES_SBOX);
             AES128::shift_rows(&mut block);
             AES128::mix_columns(&mut block, &AES_MIX_COLUMNS_MATRIX);
-            self.add_round_key(&mut block, &round_keys[i]);
+            self.add_round_key(&mut block, round_key);
         }
         self.sub_bytes(&mut block, &AES_SBOX);
         AES128::shift_rows(&mut block);
@@ -283,20 +283,20 @@ impl AES128 {
     }
 
     pub fn decrypt(&self, data: &[u8], key: &Key) -> Vec<u8> {
-        let blocks = self.blocks(&data);
+        let blocks = self.blocks(data);
 
         let empcripted_blocks = blocks
             .into_iter()
-            .map(|block| self.decrypt_block(block, &key))
+            .map(|block| self.decrypt_block(block, key))
             .collect::<Vec<_>>();
 
         self.blocks_to_bytes(empcripted_blocks)
     }
 
     fn decrypt_block(&self, block: Block, key: &Key) -> Block {
-        let mut block = block.clone();
-        let mut key = key.clone();
-        self.add_round_key(&mut block, &key);
+        let mut block = block;
+        let mut key = key;
+        self.add_round_key(&mut block, key);
         let round_keys = key.rounds_keys(&AES_INV_SBOX);
         for i in 1..AES_ROUNDS {
             self.sub_bytes(&mut block, &AES_INV_SBOX);
@@ -343,7 +343,7 @@ impl AES128 {
 
     fn shift_rows(state: &mut Block) {
         for i in 1..4 {
-            let temp = state[i].clone();
+            let temp = state[i];
             for j in 0..4 {
                 state[i][j] = temp[(j + i) % 4];
             }
@@ -351,7 +351,7 @@ impl AES128 {
     }
 
     fn mix_columns(block: &mut Block, mix_columns: &[[u8; 4]; 4]) {
-        let temp = matrix_multiply(&mix_columns, &block.data);
+        let temp = matrix_multiply(mix_columns, &block.data);
         *block = Block { data: temp };
     }
 
