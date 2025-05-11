@@ -1,7 +1,7 @@
 use crate::math::*;
 use std::{
     default,
-    fmt::Debug,
+    fmt::{Debug, Display, Formatter},
     ops::{BitXor, BitXorAssign, Index, IndexMut},
 };
 
@@ -33,6 +33,79 @@ impl Block {
         }
         Block { data }
     }
+
+    fn encrypt<const NK: usize, const NR: usize>(&self, key: &Key<NK>) -> Block {
+        let mut block = *self;
+        let round_keys = key.rounds_keys(&AES_SBOX);
+        // 1st round
+        block.add_round_key(key);
+        // 2nd to n-1th rounds
+        for round_key in round_keys.iter().take(AES_ROUNDS).skip(1) {
+            block.sub_bytes(&AES_SBOX);
+            block.shift_rows();
+            block.mix_columns(&AES_MIX_COLUMNS_MATRIX);
+            block.add_round_key(round_key);
+        }
+        // Last round
+        block.sub_bytes(&AES_SBOX);
+        block.shift_rows();
+        block.add_round_key(&round_keys[AES_ROUNDS]);
+        block
+    }
+
+    fn decrypt<const NK: usize, const NR: usize>(&self, key: &Key<NK>) -> Block {
+        let mut block = *self;
+        let round_keys = key.rounds_keys(&AES_SBOX);
+        // 1st round
+        block.add_round_key(round_keys.last().unwrap());
+        block.inv_shift_rows();
+        block.sub_bytes(&AES_INV_SBOX);
+        // 2nd to n-1th rounds
+        for round_key in round_keys.iter().skip(1).rev().skip(1) {
+            block.add_round_key(round_key);
+            block.mix_columns(&AES_INV_MIX_COLUMNS_MATRIX);
+            block.inv_shift_rows();
+            block.sub_bytes(&AES_INV_SBOX);
+        }
+        // Last round
+        block.add_round_key(round_keys.first().unwrap());
+        block
+    }
+
+    fn sub_bytes(&mut self, sbox: &Sbox) {
+        for i in 0..4 {
+            for j in 0..4 {
+                self.data[i][j] = substitute(self.data[i][j], sbox);
+            }
+        }
+    }
+
+    fn add_round_key<const NK: usize>(&mut self, round_key: &Key<NK>) {
+        *self ^= round_key;
+    }
+
+    fn shift_rows(&mut self) {
+        for i in 1..4 {
+            let temp = self.data[i];
+            for j in 0..4 {
+                self.data[i][j] = temp[(j + i) % 4];
+            }
+        }
+    }
+
+    fn inv_shift_rows(&mut self) {
+        for i in 1..4 {
+            let temp = self.data[i];
+            for j in 0..4 {
+                self.data[i][j] = temp[(j + 4 - i) % 4];
+            }
+        }
+    }
+
+    fn mix_columns(&mut self, mix_columns: &[[u8; 4]; 4]) {
+        let temp = matrix_multiply(mix_columns, &self.data);
+        *self = Block { data: temp };
+    }
 }
 
 impl Debug for Block {
@@ -44,6 +117,19 @@ impl Debug for Block {
                 write!(f, "{:02x} ", self.data[i][j])?;
             }
             writeln!(f)?;
+        }
+        Ok(())
+    }
+}
+
+impl Display for Block {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f)?;
+        let len = self.data.len();
+        for i in 0..len {
+            for j in 0..4 {
+                write!(f, "{:02x}", self.data[i][j])?;
+            }
         }
         Ok(())
     }
@@ -194,6 +280,19 @@ impl<const NK: usize> Debug for Key<NK> {
     }
 }
 
+impl<const NK: usize> Display for Key<NK> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f)?;
+        let len = self.subkeys.len();
+        for i in 0..len {
+            for j in 0..4 {
+                write!(f, "{:02x}", self.subkeys[i][j])?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl<const NK: usize> From<&str> for Key<NK> {
     fn from(key: &str) -> Self {
         let bytes = key.as_bytes();
@@ -258,29 +357,10 @@ pub fn encrypt<const NK: usize, const NR: usize>(data: &str, key: &Key<NK>) -> V
 
     let empcripted_blocks = blocks
         .into_iter()
-        .map(|block| encrypt_block::<NK, NR>(block, key))
+        .map(|block| block.encrypt::<NK, NR>(key))
         .collect::<Vec<_>>();
 
     blocks_to_bytes(empcripted_blocks)
-}
-
-fn encrypt_block<const NK: usize, const NR: usize>(block: Block, key: &Key<NK>) -> Block {
-    let mut block = block;
-    let round_keys = key.rounds_keys(&AES_SBOX);
-    // 1st round
-    add_round_key(&mut block, key);
-    // 2nd to n-1th rounds
-    for round_key in round_keys.iter().take(AES_ROUNDS).skip(1) {
-        sub_bytes(&mut block, &AES_SBOX);
-        shift_rows(&mut block);
-        mix_columns(&mut block, &AES_MIX_COLUMNS_MATRIX);
-        add_round_key(&mut block, round_key);
-    }
-    // Last round
-    sub_bytes(&mut block, &AES_SBOX);
-    shift_rows(&mut block);
-    add_round_key(&mut block, &round_keys[AES_ROUNDS]);
-    block
 }
 
 pub fn decrypt<const NK: usize, const NR: usize>(data: &[u8], key: &Key<NK>) -> String {
@@ -288,29 +368,10 @@ pub fn decrypt<const NK: usize, const NR: usize>(data: &[u8], key: &Key<NK>) -> 
 
     let empcripted_blocks = blocks
         .into_iter()
-        .map(|block: Block| decrypt_block::<NK, NR>(block, key))
+        .map(|block: Block| block.decrypt::<NK, NR>(key))
         .collect::<Vec<_>>();
 
     String::from_utf8_lossy(&blocks_to_bytes(empcripted_blocks)).to_string()
-}
-
-fn decrypt_block<const NK: usize, const NR: usize>(block: Block, key: &Key<NK>) -> Block {
-    let mut block = block;
-    let round_keys = key.rounds_keys(&AES_SBOX);
-    // 1st round
-    add_round_key(&mut block, round_keys.last().unwrap());
-    inv_shift_rows(&mut block);
-    sub_bytes(&mut block, &AES_INV_SBOX);
-    // 2nd to n-1th rounds
-    for round_key in round_keys.iter().skip(1).rev().skip(1) {
-        add_round_key(&mut block, round_key);
-        mix_columns(&mut block, &AES_INV_MIX_COLUMNS_MATRIX);
-        inv_shift_rows(&mut block);
-        sub_bytes(&mut block, &AES_INV_SBOX);
-    }
-    // Last round
-    add_round_key(&mut block, round_keys.first().unwrap());
-    block
 }
 
 fn blocks(data: &[u8]) -> Vec<Block> {
@@ -330,41 +391,6 @@ fn blocks_to_bytes(blocks: Vec<Block>) -> Vec<u8> {
         .into_iter()
         .flat_map(|block| block.data.into_iter().flat_map(|row| row.into_iter()))
         .collect()
-}
-
-fn sub_bytes(state: &mut Block, sbox: &Sbox) {
-    for i in 0..4 {
-        for j in 0..4 {
-            state[i][j] = substitute(state[i][j], sbox);
-        }
-    }
-}
-
-fn add_round_key<const NK: usize>(state: &mut Block, round_key: &Key<NK>) {
-    *state ^= round_key;
-}
-
-fn shift_rows(state: &mut Block) {
-    for i in 1..4 {
-        let temp = state[i];
-        for j in 0..4 {
-            state[i][j] = temp[(j + i) % 4];
-        }
-    }
-}
-
-fn inv_shift_rows(state: &mut Block) {
-    for i in 1..4 {
-        let temp = state[i];
-        for j in 0..4 {
-            state[i][j] = temp[(j + 4 - i) % 4];
-        }
-    }
-}
-
-fn mix_columns(block: &mut Block, mix_columns: &[[u8; 4]; 4]) {
-    let temp = matrix_multiply(mix_columns, &block.data);
-    *block = Block { data: temp };
 }
 
 fn substitute(byte: u8, sbox: &Sbox) -> u8 {
@@ -442,11 +468,11 @@ mod tests {
 
         let expected_encrypted = Block::from_hex_string("3925841d02dc09fbdc118597196a0b32");
 
-        let encrypted = encrypt_block::<4, 10>(block.clone(), &key);
+        let encrypted = block.clone().encrypt::<4, 10>(&key);
         assert_ne!(block, encrypted);
         assert_eq!(expected_encrypted, encrypted);
 
-        let decrypted = decrypt_block::<4, 10>(encrypted, &key);
+        let decrypted = encrypted.decrypt::<4, 10>(&key);
 
         assert_eq!(block, decrypted);
     }
@@ -504,7 +530,7 @@ mod tests {
             ],
         };
 
-        shift_rows(&mut block);
+        block.shift_rows();
         assert_eq!(block.data, expected.data);
     }
 
@@ -528,7 +554,7 @@ mod tests {
             ],
         };
 
-        mix_columns(&mut block, &AES_MIX_COLUMNS_MATRIX);
+        block.mix_columns(&AES_MIX_COLUMNS_MATRIX);
         assert_eq!(block.data, expected.data);
     }
 
@@ -552,7 +578,7 @@ mod tests {
             ],
         };
 
-        mix_columns(&mut block, &AES_MIX_COLUMNS_MATRIX);
+        block.mix_columns(&AES_MIX_COLUMNS_MATRIX);
         assert_eq!(block.data, expected.data);
     }
 
@@ -590,5 +616,3 @@ mod tests {
         assert_eq!(bytes.len(), expected.len());
     }
 }
-
-pub fn main() {}
