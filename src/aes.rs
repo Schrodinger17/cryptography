@@ -247,7 +247,7 @@ impl IndexMut<usize> for Key {
     }
 }
 
-pub fn encrypt(data: &str, key: &Key) -> String {
+pub fn encrypt(data: &str, key: &Key) -> Vec<u8> {
     let data = data.as_bytes();
     let blocks = blocks(data);
 
@@ -256,7 +256,7 @@ pub fn encrypt(data: &str, key: &Key) -> String {
         .map(|block| encrypt_block(block, key))
         .collect::<Vec<_>>();
 
-    String::from_utf8_lossy(&blocks_to_bytes(empcripted_blocks)).to_string()
+    blocks_to_bytes(empcripted_blocks)
 }
 
 fn encrypt_block(block: Block, key: &Key) -> Block {
@@ -278,8 +278,7 @@ fn encrypt_block(block: Block, key: &Key) -> Block {
     block
 }
 
-pub fn decrypt(data: &str, key: &Key) -> String {
-    let data = data.as_bytes();
+pub fn decrypt(data: &[u8], key: &Key) -> String {
     let blocks = blocks(data);
 
     let empcripted_blocks = blocks
@@ -557,6 +556,33 @@ mod tests {
         let a: u8 = 0x12;
         let b: u8 = 18;
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn blocks_to_bytes_test() {
+        let blocks = vec![
+            Block {
+                data: [
+                    [0x01, 0x02, 0x03, 0x04],
+                    [0x05, 0x06, 0x07, 0x08],
+                    [0x09, 0x0a, 0x0b, 0x0c],
+                    [0x0d, 0x0e, 0x0f, 0x10],
+                ],
+            },
+            Block {
+                data: [
+                    [0x11, 0x12, 0x13, 0x14],
+                    [0x15, 0x16, 0x17, 0x18],
+                    [0x19, 0x1a, 0x1b, 0x1c],
+                    [0x1d, 0x1e, 0x1f, 0x20],
+                ],
+            },
+        ];
+
+        let expected = (1..=32).map(|i| i as u8).collect::<Vec<_>>();
+
+        let bytes = blocks_to_bytes(blocks);
+        assert_eq!(bytes.len(), expected.len());
     }
 }
 
