@@ -2,6 +2,7 @@ use crate::math::*;
 use std::{
     default,
     fmt::{Debug, Display, Formatter},
+    marker::PhantomData,
     ops::{BitXor, BitXorAssign, Index, IndexMut},
 };
 
@@ -351,35 +352,45 @@ impl<const NK: usize> IndexMut<usize> for Key<NK> {
     }
 }
 
-pub fn encrypt<const NK: usize, const NR: usize>(data: &str, key: &Key<NK>) -> Vec<u8> {
-    let data = data.as_bytes();
-    let blocks = blocks(data);
+pub(crate) type AES128 = AES<4, 10>;
+pub(crate) type AES192 = AES<6, 12>;
+pub(crate) type AES256 = AES<8, 14>;
 
-    let empcripted_blocks = blocks
-        .into_iter()
-        .map(|block| block.encrypt::<NK, NR>(key))
-        .collect::<Vec<_>>();
-
-    blocks_to_bytes(empcripted_blocks)
+pub struct AES<const NK: usize, const NR: usize> {
+    phantom: PhantomData<(usize, usize)>,
 }
 
-pub fn decrypt<const NK: usize, const NR: usize>(data: &[u8], key: &Key<NK>) -> String {
-    let blocks = blocks(data);
+impl<const NK: usize, const NR: usize> AES<NK, NR> {
+    pub fn encrypt(data: &str, key: &Key<NK>) -> Vec<u8> {
+        let data = data.as_bytes();
+        let blocks = blocks(data);
 
-    let empcripted_blocks = blocks
-        .into_iter()
-        .map(|block: Block| block.decrypt::<NK, NR>(key))
-        .collect::<Vec<_>>();
+        let empcripted_blocks = blocks
+            .into_iter()
+            .map(|block| block.encrypt::<NK, NR>(key))
+            .collect::<Vec<_>>();
 
-    String::from_utf8_lossy(
-        &blocks_to_bytes(empcripted_blocks)
-            .iter()
-            .filter(|c| **c != 0u8)
-            .cloned()
-            .collect::<Vec<u8>>(),
-    )
-    .trim_end()
-    .to_string()
+        blocks_to_bytes(empcripted_blocks)
+    }
+
+    pub fn decrypt(data: &[u8], key: &Key<NK>) -> String {
+        let blocks = blocks(data);
+
+        let empcripted_blocks = blocks
+            .into_iter()
+            .map(|block: Block| block.decrypt::<NK, NR>(key))
+            .collect::<Vec<_>>();
+
+        String::from_utf8_lossy(
+            &blocks_to_bytes(empcripted_blocks)
+                .iter()
+                .filter(|c| **c != 0u8)
+                .cloned()
+                .collect::<Vec<u8>>(),
+        )
+        .trim_end()
+        .to_string()
+    }
 }
 
 fn blocks(data: &[u8]) -> Vec<Block> {
@@ -489,9 +500,9 @@ mod tests {
     fn aes_test_long_message() {
         let message = "Demain, dès l'aube à l'heure ou blanchit la campagne.".to_string();
         let key = Key128::from("key");
-        let encrypted = encrypt::<4, 10>(&message, &key);
+        let encrypted = AES128::encrypt(&message, &key);
         assert_ne!(message, String::from_utf8_lossy(&encrypted));
-        let decrypted = decrypt::<4, 10>(&encrypted, &key);
+        let decrypted = AES128::decrypt(&encrypted, &key);
         assert_eq!(message, decrypted);
     }
 
