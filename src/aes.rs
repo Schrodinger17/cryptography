@@ -1,4 +1,5 @@
 use crate::math::*;
+use core::panic;
 use std::{
     default,
     fmt::{Debug, Display, Formatter},
@@ -37,11 +38,11 @@ impl Block {
 
     fn encrypt<const NK: usize, const NR: usize>(&self, key: &Key<NK>) -> Block {
         let mut block = *self;
-        let round_keys = key.rounds_keys(&AES_SBOX);
+        let round_keys = key.rounds_keys::<NR>(&AES_SBOX);
         // 1st round
         block.add_round_key(key);
         // 2nd to n-1th rounds
-        for round_key in round_keys.iter().take(AES_ROUNDS).skip(1) {
+        for round_key in round_keys.iter().take(NR).skip(1) {
             block.sub_bytes(&AES_SBOX);
             block.shift_rows();
             block.mix_columns(&AES_MIX_COLUMNS_MATRIX);
@@ -50,13 +51,13 @@ impl Block {
         // Last round
         block.sub_bytes(&AES_SBOX);
         block.shift_rows();
-        block.add_round_key(&round_keys[AES_ROUNDS]);
+        block.add_round_key(&round_keys[NR]);
         block
     }
 
     fn decrypt<const NK: usize, const NR: usize>(&self, key: &Key<NK>) -> Block {
         let mut block = *self;
-        let round_keys = key.rounds_keys(&AES_SBOX);
+        let round_keys = key.rounds_keys::<NR>(&AES_SBOX);
         // 1st round
         block.add_round_key(round_keys.last().unwrap());
         block.inv_shift_rows();
@@ -234,37 +235,120 @@ impl<const NK: usize> Key<NK> {
         key
     }
 
-    fn rounds_keys(&self, sbox: &Sbox) -> Vec<Key<NK>> {
-        let key = self.fliped();
-        let mut keys = vec![key];
-        for round in 1..=(AES_ROUNDS as u8) {
-            let sub_keys = keys.last().unwrap().subkeys();
-
-            let mut next_sub_keys = [[0u8; 4]; NK];
-
-            next_sub_keys[0] =
-                Key::<NK>::subkey_xor(sub_keys[0], Key::<NK>::g(&sub_keys[3], round, sbox));
-            next_sub_keys[1] = Key::<NK>::subkey_xor(sub_keys[1], next_sub_keys[0]);
-            next_sub_keys[2] = Key::<NK>::subkey_xor(sub_keys[2], next_sub_keys[1]);
-            next_sub_keys[3] = Key::<NK>::subkey_xor(sub_keys[3], next_sub_keys[2]);
-            let next_key = Key::from_subkeys(next_sub_keys);
-            keys.push(next_key);
-        }
-        keys = keys.iter().map(|key| key.fliped()).collect::<Vec<_>>();
-        keys
-    }
-
     fn r(round: u8) -> u8 {
         gf_power(0x02, round - 1)
     }
 
-    fn g(key: &SubKey, round: u8, sbox: &Sbox) -> SubKey {
+    fn g(sub_key: &SubKey, round: u8, sbox: &Sbox) -> SubKey {
         let mut new_key = [0; 4];
-        new_key[0] = gf_add(substitute(key[1], sbox), Key::<NK>::r(round));
-        new_key[1] = substitute(key[2], sbox);
-        new_key[2] = substitute(key[3], sbox);
-        new_key[3] = substitute(key[0], sbox);
+        new_key[0] = gf_add(substitute(sub_key[1], sbox), Key::<NK>::r(round));
+        new_key[1] = substitute(sub_key[2], sbox);
+        new_key[2] = substitute(sub_key[3], sbox);
+        new_key[3] = substitute(sub_key[0], sbox);
         new_key
+    }
+
+    fn rounds_keys<const NR: usize>(&self, sbox: &Sbox) -> Vec<Key128> {
+        let key = self.fliped();
+        let mut sub_keys = vec![[0; 4]; (NR + 1) * 4];
+        // Initialize first key
+        for i in 0..NK {
+            sub_keys[i] = self.subkeys[i];
+        }
+
+        for round in 1..=NR {
+            let prev_key_pos = 4 * (round - 1);
+            let curr_key_pos = 4 * round;
+            match NK {
+                4 => {
+                    sub_keys[curr_key_pos] = Key::<NK>::subkey_xor(
+                        sub_keys[0],
+                        Key::<NK>::g(&sub_keys[curr_key_pos + 3], round as u8, sbox),
+                    );
+                    sub_keys[curr_key_pos + 1] = Key::<NK>::subkey_xor(
+                        sub_keys[curr_key_pos + 1],
+                        sub_keys[curr_key_pos + 0],
+                    );
+                    sub_keys[curr_key_pos + 2] = Key::<NK>::subkey_xor(
+                        sub_keys[curr_key_pos + 2],
+                        sub_keys[curr_key_pos + 1],
+                    );
+                    sub_keys[curr_key_pos + 3] = Key::<NK>::subkey_xor(
+                        sub_keys[curr_key_pos + 3],
+                        sub_keys[curr_key_pos + 2],
+                    );
+                }
+                6 => {
+                    sub_keys[curr_key_pos + 0] = Key::<NK>::subkey_xor(
+                        sub_keys[0],
+                        Key::<NK>::g(&sub_keys[curr_key_pos + 5], round as u8, sbox),
+                    );
+                    sub_keys[curr_key_pos + 1] = Key::<NK>::subkey_xor(
+                        sub_keys[curr_key_pos + 1],
+                        sub_keys[curr_key_pos + 0],
+                    );
+                    sub_keys[curr_key_pos + 2] = Key::<NK>::subkey_xor(
+                        sub_keys[curr_key_pos + 2],
+                        sub_keys[curr_key_pos + 1],
+                    );
+                    sub_keys[curr_key_pos + 3] = Key::<NK>::subkey_xor(
+                        sub_keys[curr_key_pos + 3],
+                        sub_keys[curr_key_pos + 2],
+                    );
+                    sub_keys[curr_key_pos + 4] = Key::<NK>::subkey_xor(
+                        sub_keys[curr_key_pos + 4],
+                        sub_keys[curr_key_pos + 3],
+                    );
+                    sub_keys[curr_key_pos + 5] = Key::<NK>::subkey_xor(
+                        sub_keys[curr_key_pos + 5],
+                        sub_keys[curr_key_pos + 4],
+                    );
+                }
+                8 => {
+                    sub_keys[curr_key_pos + 0] = Key::<NK>::subkey_xor(
+                        sub_keys[0],
+                        Key::<NK>::g(&sub_keys[curr_key_pos + 7], round as u8, sbox),
+                    );
+                    sub_keys[curr_key_pos + 1] = Key::<NK>::subkey_xor(
+                        sub_keys[curr_key_pos + 1],
+                        sub_keys[curr_key_pos + 0],
+                    );
+                    sub_keys[curr_key_pos + 2] = Key::<NK>::subkey_xor(
+                        sub_keys[curr_key_pos + 2],
+                        sub_keys[curr_key_pos + 1],
+                    );
+                    sub_keys[curr_key_pos + 3] = Key::<NK>::subkey_xor(
+                        sub_keys[curr_key_pos + 3],
+                        sub_keys[curr_key_pos + 2],
+                    );
+                    sub_keys[curr_key_pos + 4] = Key::<NK>::subkey_xor(
+                        sub_keys[4],
+                        Key::<NK>::g(&sub_keys[curr_key_pos + 3], round as u8, sbox),
+                    );
+                    sub_keys[curr_key_pos + 5] = Key::<NK>::subkey_xor(
+                        sub_keys[curr_key_pos + 5],
+                        sub_keys[curr_key_pos + 4],
+                    );
+                    sub_keys[curr_key_pos + 6] = Key::<NK>::subkey_xor(
+                        sub_keys[curr_key_pos + 6],
+                        sub_keys[curr_key_pos + 5],
+                    );
+                    sub_keys[curr_key_pos + 7] = Key::<NK>::subkey_xor(
+                        sub_keys[curr_key_pos + 7],
+                        sub_keys[curr_key_pos + 6],
+                    );
+                }
+                _ => panic!("Invalid key size: {}", NK),
+            }
+        }
+        dbg!(&sub_keys);
+        let keys = sub_keys
+            .chunks(4)
+            .map(|chunk| Key128::from_subkeys(chunk.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        dbg!(&keys);
+        //let keys = keys.into_iter().map(|key| key.fliped()).collect::<Vec<_>>();
+        keys
     }
 }
 
@@ -416,8 +500,6 @@ fn substitute(byte: u8, sbox: &Sbox) -> u8 {
     sbox[(byte >> 4) as usize][(byte & 0x0F) as usize]
 }
 
-const AES_ROUNDS: usize = 10;
-
 type Sbox = [[u8; 16]; 16];
 
 #[rustfmt::skip]
@@ -521,18 +603,52 @@ mod tests {
     }
 
     #[test]
-    fn round_key_test() {
+    fn round_key_test_4() {
         let key0 = Key128::from_hex_string("2b7e151628aed2a6abf7158809cf4f3c");
         let key1 = Key128::from_hex_string("a0fafe1788542cb123a339392a6c7605");
         let key11 = Key128::from_hex_string("d014f9a8c9ee2589e13f0cc8b6630ca6");
 
-        let rounds_keys = key0.rounds_keys(&AES_SBOX);
+        let rounds_keys = key0.rounds_keys::<10>(&AES_SBOX);
 
         assert_eq!(rounds_keys.len(), 11);
 
         assert_eq!(rounds_keys[0], key0);
         assert_eq!(rounds_keys[1], key1);
         assert_eq!(rounds_keys[10], key11);
+    }
+
+    #[test]
+    fn round_key_test_6() {
+        let key0 = Key192::from_hex_string("8e73b0f7da0e6452c810f32b809079e562f8ead2522c6b7b");
+        let key0 = Key128::from_hex_string("2b7e151628aed2a6abf7158809cf4f3c");
+        let key1 = Key128::from_hex_string("a0fafe1788542cb123a339392a6c7605");
+        let key13 = Key128::from_hex_string("d014f9a8c9ee2589e13f0cc8b6630ca6");
+
+        let rounds_keys = key0.rounds_keys::<12>(&AES_SBOX);
+
+        assert_eq!(rounds_keys.len(), 13);
+
+        assert_eq!(rounds_keys[0], key0);
+        assert_eq!(rounds_keys[1], key1);
+        assert_eq!(rounds_keys[13], key13);
+    }
+
+    #[test]
+    fn round_key_test_8() {
+        let key = Key256::from_hex_string(
+            "2b7e151628aed2a6abf7158809cf4f3c2b7e151628aed2a6abf7158809cf4f3c",
+        );
+        let key0 = Key128::from_hex_string("2b7e151628aed2a6abf7158809cf4f3c");
+        let key1 = Key128::from_hex_string("a0fafe1788542cb123a339392a6c7605");
+        let key15 = Key128::from_hex_string("d014f9a8c9ee2589e13f0cc8b6630ca6");
+
+        let rounds_keys = key0.rounds_keys::<12>(&AES_SBOX);
+
+        assert_eq!(rounds_keys.len(), 15);
+
+        assert_eq!(rounds_keys[0], key0);
+        assert_eq!(rounds_keys[1], key1);
+        assert_eq!(rounds_keys[15], key15);
     }
 
     #[test]
